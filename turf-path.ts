@@ -17,10 +17,17 @@ type Node = string;
 type Edge = { target: Node; weight: number };
 type Graph = Map<Node, Edge[]>;
 
+type InitialPointInfo = {
+  origin: number[];
+  lineString: Feature<LineString>;
+  distance: number;
+  pointOnLine: number[];
+}
+
 export default class LinestringPathFinder {
   network: Graph;
-  startPoint: number[];
-  endPoint: number[];
+  startInfo: InitialPointInfo;
+  endInfo: InitialPointInfo;
   constructor(multiLinestrings: Feature<MultiLineString | LineString>[], start: number[], end: number[]) {
     let closestLineStringStartPoint: number[] | null = null;
     let closestToStartDistance = Infinity;
@@ -79,20 +86,27 @@ export default class LinestringPathFinder {
     if (!closestLineStringStartPoint) {
       console.log('closest line string point not found')
     }
-    const startToEndLineString = lineString([start, closestLineStringStartPoint ? closestLineStringStartPoint : start]);
-    linestrings.push(startToEndLineString as Feature<LineString>);
+    const startToNearestLineString = lineString([start, closestLineStringStartPoint ? closestLineStringStartPoint : start]);
 
     if (!closestLineStringEndPoint) {
       console.log('closest line string point not found')
     }
-    const endToStartLineString = lineString([closestLineStringEndPoint ? closestLineStringEndPoint : end, end]);
-    linestrings.push(endToStartLineString as Feature<LineString>);
+    const endToNearestLineString = lineString([closestLineStringEndPoint ? closestLineStringEndPoint : end, end]);
 
-    console.log('linestrings', JSON.stringify(linestrings))
+    this.startInfo = {
+      origin: start,
+      lineString: startToNearestLineString,
+      distance: closestToStartDistance,
+      pointOnLine: closestLineStringStartPoint ? closestLineStringStartPoint : start
+    }
+    this.endInfo = {
+      origin: end,
+      lineString: endToNearestLineString,
+      distance: cloestToEndDistance,
+      pointOnLine: closestLineStringEndPoint ? closestLineStringEndPoint : end
+    }
+
     this.network = this.buildNetwork(linestrings);
-
-    this.startPoint = start;
-    this.endPoint = end;
   }
 
   /**
@@ -158,10 +172,10 @@ export default class LinestringPathFinder {
       }
     }
 
-    if(before?.weight === 0 || before?.weight === null) {
+    if (before?.weight === 0 || before?.weight === null) {
       before = null;
     }
-    if(after?.weight === 0 || after?.weight === null) {
+    if (after?.weight === 0 || after?.weight === null) {
       after = null;
     }
 
@@ -174,10 +188,7 @@ export default class LinestringPathFinder {
 
   getIntersections(linestrings: Feature<LineString>[]): { coords: number[]; neighbors: Edge[] }[] {
     // Function to calculate intersection details
-    const intersections = new Map<string, { coords: number[]; neighbors: Edge[] }>();
-    const otherIntersections: { coords: number[]; neighbors: Edge[] }[] = []
-
-    console.log(linestrings.length)
+    const intersections: { coords: number[]; neighbors: Edge[] }[] = []
 
     // Iterate through each pair of linestrings
     for (let i = 0; i < linestrings.length; i++) {
@@ -187,25 +198,63 @@ export default class LinestringPathFinder {
           const intersectPoints = lineIntersect(linestrings[i], linestrings[j]);
 
           intersectPoints.features.forEach((p) => {
-            console.log('an intersection')
             const intersection = p.geometry.coordinates;
 
             // Find the neighboring points on each linestring
             const neighbors = this.getDirectionalNeighbors(linestrings[i], linestrings[j], intersection);
-            otherIntersections.push({ coords: intersection, neighbors })
+            intersections.push({ coords: intersection, neighbors })
 
-            // we have the intersection with its neighbors, but I don't think the neighbors know about the intersection
-            if(!intersections.has(this.coordToKey(intersection))) {
-              intersections.set(this.coordToKey(intersection), { coords: intersection, neighbors });
-            }
           });
         }
       }
     }
 
-    console.log('otherIntersections', JSON.stringify(otherIntersections))
+    return intersections
+  }
 
-    return [...intersections.values()];
+
+  handleStartAndEndInfo() {
+    const graph: Graph = new Map();
+
+    const startKey = this.coordToKey(this.startInfo.origin);
+    const endKey = this.coordToKey(this.endInfo.origin);
+    const startOnLineKey = this.coordToKey(this.startInfo.pointOnLine);
+    const endOnLineKey = this.coordToKey(this.endInfo.pointOnLine);
+    if (!graph.has(startKey)) {
+      graph.set(startKey, []);
+    }
+    if (!graph.has(endKey)) {
+      graph.set(endKey, []);
+    }
+    if (!graph.has(startOnLineKey)) {
+      graph.set(startOnLineKey, []);
+    }
+    if (!graph.has(endOnLineKey)) {
+      graph.set(endOnLineKey, []);
+    }
+
+    graph.get(startKey)?.push({ target: startOnLineKey, weight: this.startInfo.distance });
+    graph.get(endKey)?.push({ target: endOnLineKey, weight: this.endInfo.distance });
+
+    const { before: startBefore, after: startAfter } = this.getClosestPointsForLine(this.startInfo.lineString, this.startInfo.pointOnLine);
+    graph.get(startOnLineKey)?.push({ target: startKey, weight: this.startInfo.distance });
+    if (startBefore && (startKey !== startOnLineKey) && (startKey !== startBefore?.target)) {
+      graph.get(startOnLineKey)?.push(startBefore);
+    }
+    if (startAfter && (startKey !== startOnLineKey) && (startKey !== startAfter?.target)) {
+      graph.get(startOnLineKey)?.push(startAfter);
+    }
+
+    const { before: endBefore, after: endAfter } = this.getClosestPointsForLine(this.endInfo.lineString, this.endInfo.pointOnLine);
+    graph.get(endOnLineKey)?.push({ target: endKey, weight: this.endInfo.distance });
+    if (endBefore && (endKey !== endOnLineKey) && (endKey !== endBefore?.target)) {
+      graph.get(endOnLineKey)?.push(endBefore);
+    }
+    if (endAfter && (endKey !== endOnLineKey) && (endKey !== endAfter?.target)) {
+      graph.get(endOnLineKey)?.push(endAfter);
+    }
+
+    return graph
   }
 
   /**
@@ -214,11 +263,14 @@ export default class LinestringPathFinder {
   * @returns An adjacency list representing the graph
   */
   buildNetwork(linestrings: Feature<LineString>[]): Graph {
-    const graph: Graph = new Map();
-
     // for each linestring, we need a record of the linestrings that intersect it and at what points
     // we need to make a record of those points and the neighbors of those points
     // then we ned to give those neighbors weights and include them in the graph
+
+    // for both the start and end point, we need to figure out the neighbors
+    // this will end up being the start of the whole graph
+    const graph = this.handleStartAndEndInfo();
+
 
     const intersections = this.getIntersections(linestrings);
 
@@ -267,8 +319,6 @@ export default class LinestringPathFinder {
           graph.get(key)?.push({ target: nextKey, weight: nextCoordDistance });
         }
       }
-
-
     });
 
     return graph;
@@ -372,56 +422,29 @@ const test = () => {
   // ]);
 
   // const linestrings = [linestring1, linestring2, linestring3, linestring4, linestring5];
-  
+
   const line2 = lineString([
     [-111.8902, 40.7634],
     [-111.8902, 40.7908]
   ]);
-  
+
   const line4 = lineString([
     [-111.89572534700311, 40.779711453317816],
     [-111.88920800121039, 40.78164506327522],
     [-111.88044198055394, 40.77927854785486],
     [-111.87903179462201, 40.780144355960005]
   ]);
-  
-  
-  
 
-  const linestrings = [line2, line4];
-  
+  const s = [-111.8912, 40.7644]
 
-  const s = [-111.8904, 40.7635]
-
-  const e = [-111.8808, 40.77928]
+  const e = [-111.87923179462201, 40.780154355960005]
 
 
-  const pathFinder = new LinestringPathFinder(linestrings, s, e);
+  const pathFinder = new LinestringPathFinder([line2, line4], s, e);
 
-  const other = [
-    // lineString([[-111.8902, 40.7634], [-111.8902, 40.7908]]),
-    lineString([
-      [-111.89572534700311, 40.779711453317816],
-      [-111.88920800121039, 40.78164506327522],
-      [-111.88044198055394, 40.77927854785486],
-      [-111.87903179462201, 40.780144355960005]
-    ]),
-    // lineString([[-111.8904, 40.7635], [-111.8902, 40.76349439305361]]),
-    lineString([[-111.88075996405739, 40.779364392149986], [-111.8808, 40.77928]])
-  ];
-  // for some reason these two lines do not intersect, but they for sure do wtf 
+  const shortestPath = pathFinder.findShortestPath(s, e);
 
-  const intersections = pathFinder.getIntersections(other);
-
-  const thing = lineIntersect(other[0], other[1]);
-  console.log('thing', thing);
-
-  console.log(JSON.stringify(intersections));
-
-// 
-  // const shortestPath = pathFinder.findShortestPath(s, e);
-
-  // const shortestPath = pathFinder.findShortestPath(s, e);
+  console.log(shortestPath)
 
 }
 
@@ -433,8 +456,11 @@ test();
 
 /*
   constructor - pretty sure it works, the linestrings look great on geojson.io
+    IDK - we need to be able to force the two start linestrings to be included into the network somehow
+    Right now the stupid nearest point function doesn't necessarily always constitute an intersection which is wackadoodle idk
+    
 
   coordToKey - works
 
-
+  getIntersections - works but dosn't with lines that apparently don't intersect lol
 */
