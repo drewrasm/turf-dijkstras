@@ -1,9 +1,8 @@
-import { Feature, LineString, lineString, MultiLineString, point, Position } from '@turf/helpers';
+import { Feature, LineString, lineString, MultiLineString, point } from '@turf/helpers';
 import turfDistance from '@turf/distance';
 import { flattenEach } from "@turf/meta";
 import lineIntersect from "@turf/line-intersect";
 import nearestPointOnLine from "@turf/nearest-point-on-line";
-import pointToLineDistance from "@turf/point-to-line-distance";
 
 
 /*
@@ -200,7 +199,7 @@ export default class LinestringPathFinder {
   }
 
 
-  getIntersections(linestrings: Feature<LineString>[]): { coords: number[]; neighbors: Edge[], corrections: Map<Node, Edge[]>  }[] {
+  getIntersections(linestrings: Feature<LineString>[]): { coords: number[]; neighbors: Edge[], corrections: Map<Node, Edge[]> }[] {
     // change this so that per intersection we have the corrections
 
 
@@ -340,13 +339,13 @@ export default class LinestringPathFinder {
       }
       graph.get(key)?.push(...intersection.neighbors);
       // map through intersection.corrections and remove the edges from the graph
-      for(let [key, edges] of intersection.corrections) {
+      for (let [key, edges] of intersection.corrections) {
         const currentEdgesToCorrect = graph.get(key);
         if (currentEdgesToCorrect && currentEdgesToCorrect.length > 0) {
-          for(let edge of edges) {
+          for (let edge of edges) {
             currentEdgesToCorrect.forEach((edgeToCorrect, index) => {
               if (edgeToCorrect.target === edge.target && edgeToCorrect.weight.toFixed(6) === edge.weight.toFixed(6)) {
-                currentEdgesToCorrect.splice(index, 1);                
+                currentEdgesToCorrect.splice(index, 1);
               }
             })
           }
@@ -365,34 +364,34 @@ export default class LinestringPathFinder {
     const distances: Map<string, number> = new Map();
     const predecessors: Map<string, string | null> = new Map();
     const visited: Set<string> = new Set();
-  
+
     // Priority queue for nodes to visit
     const pq: [string, number][] = [];
     pq.push([source, 0]);
     distances.set(source, 0);
-  
+
     // Initialize distances to infinity and predecessors to null
     for (const node of graph.keys()) {
       if (node !== source) distances.set(node, Infinity);
       predecessors.set(node, null);
     }
-  
+
     while (pq.length > 0) {
       // Sort queue by distance and get the node with the smallest distance
       pq.sort((a, b) => a[1] - b[1]);
       const [currentNode, currentDistance] = pq.shift()!;
-  
+
       if (visited.has(currentNode)) continue;
       visited.add(currentNode);
-  
+
       // If we reached the target, no need to continue
       if (currentNode === target) break;
-  
+
       // Relax neighbors
       const neighbors = graph.get(currentNode) || [];
       for (const { target: neighbor, weight } of neighbors) {
         if (visited.has(neighbor)) continue;
-  
+
         const newDistance = currentDistance + weight;
         if (newDistance < (distances.get(neighbor) || Infinity)) {
           distances.set(neighbor, newDistance);
@@ -401,19 +400,19 @@ export default class LinestringPathFinder {
         }
       }
     }
-  
+
     // Reconstruct the shortest path
     const path: string[] = [];
     let step: string | null = target;
-  
+
     while (step) {
       path.unshift(step);
       step = predecessors.get(step) || null;
     }
-  
+
     // If the source is not part of the path, the target is unreachable
     if (path[0] !== source) return { path: [], distance: Infinity };
-  
+
     return { path, distance: distances.get(target) || Infinity };
   }
 
@@ -438,7 +437,7 @@ const test = () => {
       40.725010814740386
     ]
   ]);
-  const line2 = lineString([ [
+  const line2 = lineString([[
     -111.88850777645592,
     40.75010189571543
   ],
@@ -446,12 +445,35 @@ const test = () => {
     -111.829576856461,
     40.750967496930315
   ]])
+  const line3 = lineString([
+    [
+      -111.84355466180223,
+      40.75868302964949
+    ],
+    [
+      -111.84221125597901,
+      40.737387999134256
+    ],
+    [
+      -111.84930007130968,
+      40.729128425152965
+    ],
+    [
+      -111.83443926908637,
+      40.72798035279712
+    ]
+  ])
 
   const s = [-111.86516756409644, 40.77003545080544];
-  const e = [-111.829576856461, 40.750967496930315];
+  const e = [
+    -111.83443926908637,
+    40.72798035279712
+  ]
+
+  // TODDO - get this next example working (the previous with just the first two lines worked fine)
 
 
-  const pathFinder = new LinestringPathFinder([line1, line2], s, e);
+  const pathFinder = new LinestringPathFinder([line1, line2, line3], s, e);
 
   const { path, distance } = pathFinder.findShortestPath(s, e);
 
