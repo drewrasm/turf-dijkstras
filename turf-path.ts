@@ -106,8 +106,6 @@ export default class LinestringPathFinder {
       pointOnLine: closestLineStringEndPoint ? closestLineStringEndPoint : end
     }
 
-    console.log('linestrings', JSON.stringify(linestrings));
-
     this.network = this.buildNetwork(linestrings);
   }
 
@@ -119,8 +117,11 @@ export default class LinestringPathFinder {
   }
 
   // Helper function to find neighboring points on a line
-  getDirectionalNeighbors(line1: Feature<LineString>, line2: Feature<LineString>, intersectionPoint: number[]): Edge[] {
+  getDirectionalNeighbors(line1: Feature<LineString>, line2: Feature<LineString>, intersectionPoint: number[]): [Edge[], Map<Node, Edge[]>] {
     const neighbors: Edge[] = [];
+    // possible corrections is an array of edges that corresponds to possibilities in the original graph where a neighbor no longer is a neighbor
+    // if an intersection disrupts two neighbors, they're no longer neighbors
+    const possibleCorrections: Map<Node, Edge[]> = new Map();
 
     const { before: line1Before, after: line1After } = this.getClosestPointsForLine(line1, intersectionPoint)
     const { before: line2Before, after: line2After } = this.getClosestPointsForLine(line2, intersectionPoint)
@@ -131,6 +132,12 @@ export default class LinestringPathFinder {
     if (line1After) {
       neighbors.push(line1After);
     }
+
+    if (line1Before && line1After) {
+      possibleCorrections.set(line1Before.target, [{ target: line1After.target, weight: line1After.weight + line1Before.weight }]);
+      possibleCorrections.set(line1After.target, [{ target: line1Before.target, weight: line1After.weight + line1Before.weight }]);
+    }
+
     if (line2Before) {
       neighbors.push(line2Before);
     }
@@ -138,7 +145,12 @@ export default class LinestringPathFinder {
       neighbors.push(line2After);
     }
 
-    return neighbors;
+    if (line2Before && line2After) {
+      possibleCorrections.set(line2Before.target, [{ target: line2After.target, weight: line2After.weight + line2Before.weight }]);
+      possibleCorrections.set(line2After.target, [{ target: line2Before.target, weight: line2After.weight + line2Before.weight }]);
+    }
+
+    return [neighbors, possibleCorrections];
   }
 
   // Helper function to find the closest points on two lines. This helps construct the graph for intersecting points.
@@ -188,9 +200,13 @@ export default class LinestringPathFinder {
   }
 
 
-  getIntersections(linestrings: Feature<LineString>[]): { coords: number[]; neighbors: Edge[] }[] {
+  getIntersections(linestrings: Feature<LineString>[]): { coords: number[]; neighbors: Edge[], corrections: Map<Node, Edge[]>  }[] {
+    // change this so that per intersection we have the corrections
+
+
     // Function to calculate intersection details
-    const intersections: { coords: number[]; neighbors: Edge[] }[] = []
+    const intersections: { coords: number[]; neighbors: Edge[], corrections: Map<Node, Edge[]> }[] = []
+
 
     // Iterate through each pair of linestrings
     for (let i = 0; i < linestrings.length; i++) {
@@ -201,17 +217,16 @@ export default class LinestringPathFinder {
 
           intersectPoints.features.forEach((p) => {
             const intersection = p.geometry.coordinates;
-
             // Find the neighboring points on each linestring
-            const neighbors = this.getDirectionalNeighbors(linestrings[i], linestrings[j], intersection);
-            intersections.push({ coords: intersection, neighbors })
+            const [neighbors, possibleCorrections] = this.getDirectionalNeighbors(linestrings[i], linestrings[j], intersection);
+            intersections.push({ coords: intersection, neighbors, corrections: possibleCorrections });
 
           });
         }
       }
     }
 
-    return intersections
+    return intersections;
   }
 
 
@@ -221,9 +236,6 @@ export default class LinestringPathFinder {
     const endKey = this.coordToKey(this.endInfo.origin);
     const startOnLineKey = this.coordToKey(this.startInfo.pointOnLine);
     const endOnLineKey = this.coordToKey(this.endInfo.pointOnLine);
-
-
-    console.log(this.startInfo.origin, JSON.stringify(this.startInfo.lineString), this.startInfo.distance, this.startInfo.pointOnLine);
 
     if (!graph.has(startKey)) {
       graph.set(startKey, []);
@@ -280,24 +292,6 @@ export default class LinestringPathFinder {
     // console.log('startInfo linestring', JSON.stringify(this.startInfo.lineString));
     // console.log('endInfo linestring', JSON.stringify(this.endInfo.lineString));
 
-    const intersections = this.getIntersections(linestrings);
-
-    for (let i = 0; i < intersections.length; i++) {
-      const intersection = intersections[i];
-      const key = this.coordToKey(intersection.coords);
-      if (!graph.has(key)) {
-        graph.set(key, []);
-      }
-      for (let j = 0; j < intersection.neighbors.length; j++) {
-        const neighbor = intersection.neighbors[j];
-        if (!graph.has(neighbor.target)) {
-          graph.set(neighbor.target, []);
-        }
-        graph.get(neighbor.target)?.push({ target: key, weight: neighbor.weight });
-      }
-      graph.get(key)?.push(...intersection.neighbors);
-    }
-
     linestrings.forEach(linestring => {
       // for each linestring, we need to figure out their neighbors.
       // their neighbors, I'm pretty sure, are just the next and previous points on the linestring.
@@ -329,68 +323,99 @@ export default class LinestringPathFinder {
       }
     });
 
-    return graph;
-  }
+    const intersections = this.getIntersections(linestrings);
 
-
-  dijkstra(graph: Graph, start: Node, end: Node): { path: Node[], distance: number } {
-    const distances = new Map<Node, number>();
-    const visited = new Set<Node>();
-    const predecessors = new Map<Node, Node>();
-    const priorityQueue: [Node, number][] = [];
-
-    // Initialize distances and priority queue
-    const allNodes = new Set<Node>();
-    graph.forEach((edges, node) => {
-      allNodes.add(node);
-      edges.forEach(edge => allNodes.add(edge.target));
-    });
-
-    allNodes.forEach(node => distances.set(node, Infinity));
-
-    distances.set(start, 0);
-    priorityQueue.push([start, 0]);
-
-    // Main loop
-    while (priorityQueue.length > 0) {
-      // Sort the queue to maintain priority
-      priorityQueue.sort((a, b) => a[1] - b[1]);
-      const [currentNode, currentDistance] = priorityQueue.shift()!;
-
-      // If the node is already visited, skip it
-      if (visited.has(currentNode)) {
-        continue;
+    for (let i = 0; i < intersections.length; i++) {
+      const intersection = intersections[i];
+      const key = this.coordToKey(intersection.coords);
+      if (!graph.has(key)) {
+        graph.set(key, []);
       }
-      visited.add(currentNode);
-
-      if (currentNode === end) {
-        break;
+      for (let j = 0; j < intersection.neighbors.length; j++) {
+        const neighbor = intersection.neighbors[j];
+        if (!graph.has(neighbor.target)) {
+          graph.set(neighbor.target, []);
+        }
+        graph.get(neighbor.target)?.push({ target: key, weight: neighbor.weight });
       }
-
-      // Process neighbors
-      const edges = graph.get(currentNode) || [];
-      for (const { target, weight } of edges) {
-        const newDistance = currentDistance + weight;
-
-        if (newDistance < (distances.get(target) || Infinity)) {
-          distances.set(target, newDistance);
-          priorityQueue.push([target, newDistance]);
-          predecessors.set(target, currentNode);
+      graph.get(key)?.push(...intersection.neighbors);
+      // map through intersection.corrections and remove the edges from the graph
+      for(let [key, edges] of intersection.corrections) {
+        const currentEdgesToCorrect = graph.get(key);
+        if (currentEdgesToCorrect && currentEdgesToCorrect.length > 0) {
+          for(let edge of edges) {
+            currentEdgesToCorrect.forEach((edgeToCorrect, index) => {
+              if (edgeToCorrect.target === edge.target && edgeToCorrect.weight.toFixed(6) === edge.weight.toFixed(6)) {
+                currentEdgesToCorrect.splice(index, 1);                
+              }
+            })
+          }
         }
       }
     }
 
-    const path: Node[] = [];
-    let node: Node | undefined = end;
+    console.log('graph', graph);
 
-    while (node !== undefined) {
-      path.unshift(node);
-      node = predecessors.get(node);
-    }
-
-    return { distance: distances.get(end) || 0, path };
+    return graph;
   }
 
+
+  dijkstra(graph: Graph, source: string, target: string) {
+    // Initialize distances and predecessors
+    const distances: Map<string, number> = new Map();
+    const predecessors: Map<string, string | null> = new Map();
+    const visited: Set<string> = new Set();
+  
+    // Priority queue for nodes to visit
+    const pq: [string, number][] = [];
+    pq.push([source, 0]);
+    distances.set(source, 0);
+  
+    // Initialize distances to infinity and predecessors to null
+    for (const node of graph.keys()) {
+      if (node !== source) distances.set(node, Infinity);
+      predecessors.set(node, null);
+    }
+  
+    while (pq.length > 0) {
+      // Sort queue by distance and get the node with the smallest distance
+      pq.sort((a, b) => a[1] - b[1]);
+      const [currentNode, currentDistance] = pq.shift()!;
+  
+      if (visited.has(currentNode)) continue;
+      visited.add(currentNode);
+  
+      // If we reached the target, no need to continue
+      if (currentNode === target) break;
+  
+      // Relax neighbors
+      const neighbors = graph.get(currentNode) || [];
+      for (const { target: neighbor, weight } of neighbors) {
+        if (visited.has(neighbor)) continue;
+  
+        const newDistance = currentDistance + weight;
+        if (newDistance < (distances.get(neighbor) || Infinity)) {
+          distances.set(neighbor, newDistance);
+          predecessors.set(neighbor, currentNode);
+          pq.push([neighbor, newDistance]);
+        }
+      }
+    }
+  
+    // Reconstruct the shortest path
+    const path: string[] = [];
+    let step: string | null = target;
+  
+    while (step) {
+      path.unshift(step);
+      step = predecessors.get(step) || null;
+    }
+  
+    // If the source is not part of the path, the target is unreachable
+    if (path[0] !== source) return { path: [], distance: Infinity };
+  
+    return { path, distance: distances.get(target) || Infinity };
+  }
 
   findShortestPath = (start: number[], end: number[]): { path: Node[], distance: number } => {
 
@@ -403,24 +428,34 @@ export default class LinestringPathFinder {
 
 const test = () => {
 
-  const line2 = lineString([
-    [-111.8902, 40.7634],
-    [-111.8902, 40.7908]
+  const line1 = lineString([
+    [
+      -111.86516756409644,
+      40.77003545080544
+    ],
+    [
+      -111.86512954813114,
+      40.725010814740386
+    ]
   ]);
+  const line2 = lineString([ [
+    -111.88850777645592,
+    40.75010189571543
+  ],
+  [
+    -111.829576856461,
+    40.750967496930315
+  ]])
 
-  const line4 = lineString([
-    [-111.89572534700311, 40.779711453317816],
-    [-111.88920800121039, 40.78164506327522],
-    [-111.88044198055394, 40.77927854785486],
-    [-111.87903179462201, 40.780144355960005]
-  ]);
-
-  const s = [-111.8912, 40.7644]
-
-  const e = [-111.87923179462201, 40.780154355960005]
+  const s = [-111.86516756409644, 40.77003545080544];
+  const e = [-111.829576856461, 40.750967496930315];
 
 
-  const pathFinder = new LinestringPathFinder([line2, line4], s, e);
+  const pathFinder = new LinestringPathFinder([line1, line2], s, e);
+
+  const { path, distance } = pathFinder.findShortestPath(s, e);
+
+  console.log(path, distance);
 
 }
 
@@ -441,5 +476,5 @@ test();
   getIntersections - works but dosn't with lines that apparently don't intersect lol
 
   start and end points - not sure yet. I think it's broken. Should probably focus on the whole thing working without those pesky start and end points first
-  
+
 */
