@@ -1,0 +1,37 @@
+# Ignore operating system files
+*.DS_Store
+Thumbs.db
+
+# Ignore IDE files
+*.idea/
+*.vscode/
+
+# Ignore node_modules
+node_modules/
+
+# Ignore build output
+build/
+dist/
+
+# Ignore TypeScript compilation output
+*.js
+*.js.map
+*.d.ts
+
+# Ignore TypeScript configuration files
+tsconfig.json.backup
+
+# Ignore log files
+*.log
+
+# Ignore environment variables
+.env
+
+# Ignore test coverage output
+coverage/
+
+# Ignore yarn/npm lockfiles
+yarn.lock
+package-lock.json
+
+*-map.json
