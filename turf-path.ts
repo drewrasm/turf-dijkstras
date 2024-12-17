@@ -106,6 +106,8 @@ export default class LinestringPathFinder {
       pointOnLine: closestLineStringEndPoint ? closestLineStringEndPoint : end
     }
 
+    console.log('linestrings', JSON.stringify(linestrings));
+
     this.network = this.buildNetwork(linestrings);
   }
 
@@ -213,13 +215,16 @@ export default class LinestringPathFinder {
   }
 
 
-  handleStartAndEndInfo() {
-    const graph: Graph = new Map();
+  handleStartAndEndInfo(graph: Graph) {
 
     const startKey = this.coordToKey(this.startInfo.origin);
     const endKey = this.coordToKey(this.endInfo.origin);
     const startOnLineKey = this.coordToKey(this.startInfo.pointOnLine);
     const endOnLineKey = this.coordToKey(this.endInfo.pointOnLine);
+
+
+    console.log(this.startInfo.origin, JSON.stringify(this.startInfo.lineString), this.startInfo.distance, this.startInfo.pointOnLine);
+
     if (!graph.has(startKey)) {
       graph.set(startKey, []);
     }
@@ -253,8 +258,6 @@ export default class LinestringPathFinder {
     if (endAfter && (endKey !== endOnLineKey) && (endKey !== endAfter?.target)) {
       graph.get(endOnLineKey)?.push(endAfter);
     }
-
-    return graph
   }
 
   /**
@@ -269,8 +272,13 @@ export default class LinestringPathFinder {
 
     // for both the start and end point, we need to figure out the neighbors
     // this will end up being the start of the whole graph
-    const graph = this.handleStartAndEndInfo();
 
+    const graph: Graph = new Map();
+
+    // this.handleStartAndEndInfo(graph);
+
+    // console.log('startInfo linestring', JSON.stringify(this.startInfo.lineString));
+    // console.log('endInfo linestring', JSON.stringify(this.endInfo.lineString));
 
     const intersections = this.getIntersections(linestrings);
 
@@ -395,34 +403,6 @@ export default class LinestringPathFinder {
 
 const test = () => {
 
-
-  // const linestring1 = lineString([
-  //   [-111.8902, 40.7608], // 500 W 100 S
-  //   [-111.8902, 40.7708]  // 500 W 200 S
-  // ]);
-
-  // const linestring2 = lineString([
-  //   [-111.8802, 40.7658], // 600 W 150 S
-  //   [-111.9002, 40.7658]  // 400 W 150 S
-  // ]);
-
-  // const linestring3 = lineString([
-  //   [-111.8902, 40.7558], // 500 W 50 S
-  //   [-111.8902, 40.7858]  // 500 W 250 S
-  // ]);
-
-  // const linestring4 = lineString([
-  //   [-111.8702, 40.7708], // 700 W 200 S
-  //   [-111.9102, 40.7708]  // 300 W 200 S
-  // ]);
-
-  // const linestring5 = lineString([
-  //   [-111.8902, 40.7808], // 500 W 300 S
-  //   [-111.8902, 40.7908]  // 500 W 400 S
-  // ]);
-
-  // const linestrings = [linestring1, linestring2, linestring3, linestring4, linestring5];
-
   const line2 = lineString([
     [-111.8902, 40.7634],
     [-111.8902, 40.7908]
@@ -442,10 +422,6 @@ const test = () => {
 
   const pathFinder = new LinestringPathFinder([line2, line4], s, e);
 
-  const shortestPath = pathFinder.findShortestPath(s, e);
-
-  console.log(shortestPath)
-
 }
 
 test();
@@ -463,4 +439,7 @@ test();
   coordToKey - works
 
   getIntersections - works but dosn't with lines that apparently don't intersect lol
+
+  start and end points - not sure yet. I think it's broken. Should probably focus on the whole thing working without those pesky start and end points first
+  
 */
