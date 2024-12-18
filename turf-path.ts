@@ -1,4 +1,4 @@
-import { Feature, LineString, lineString, MultiLineString, point } from '@turf/helpers';
+import { Feature, LineString, lineString, multiLineString, MultiLineString, point } from '@turf/helpers';
 import turfDistance from '@turf/distance';
 import { flattenEach } from "@turf/meta";
 import lineIntersect from "@turf/line-intersect";
@@ -20,7 +20,12 @@ type Graph = Map<Node, Edge[]>;
 export default class LinestringPathFinder {
   network: Graph;
   constructor(multiLinestrings: Feature<MultiLineString | LineString>[], start: number[], end: number[]) {
-
+    let closestStartDistance = Infinity;
+    let closestEndDistance = Infinity;
+    let startLineIndex = -1;
+    let endLineIndex = -1;
+    let pointOnStartLine = null;
+    let pointOnEndLine = null;
     // handling start and end:
     /*
       * create a linestring from start to nearest linestring in collection
@@ -35,6 +40,22 @@ export default class LinestringPathFinder {
     const multilineStrings: Feature<MultiLineString>[] = [];
     multiLinestrings.forEach((linestring) => {
       if (linestring.geometry.type === 'LineString') {
+        // find the closest linestring to the start and end points
+        const pointOnLineForStart = nearestPointOnLine(linestring, point(start));
+        const distanceForStart = turfDistance(pointOnLineForStart, point(start));
+        if (distanceForStart < closestStartDistance) {
+          pointOnStartLine = pointOnLineForStart.geometry.coordinates;
+          closestStartDistance = distanceForStart;
+          startLineIndex = linestrings.length;
+        }
+        const pointOnLineForEnd = nearestPointOnLine(linestring, point(end));
+        const distanceForEnd = turfDistance(pointOnLineForEnd, point(end));
+        if (distanceForEnd < closestEndDistance) {
+          pointOnEndLine = pointOnLineForEnd.geometry.coordinates;
+          closestEndDistance = distanceForEnd;
+          endLineIndex = linestrings.length;
+        }
+
 
         linestrings.push(linestring as Feature<LineString>);
       } else if (linestring.geometry.type === 'MultiLineString') {
@@ -47,11 +68,37 @@ export default class LinestringPathFinder {
       const newLineStrings: Feature<LineString>[] = [];
       flattenEach(multilineString, (currentFeature: Feature<LineString>) => {
         if (currentFeature.geometry.type === 'LineString') {
+          const pointOnLineForStart = nearestPointOnLine(currentFeature, point(start));
+          const distanceForStart = turfDistance(pointOnLineForStart, point(start));
+          if (distanceForStart < closestStartDistance) {
+            pointOnStartLine = pointOnLineForStart.geometry.coordinates;
+            closestStartDistance = distanceForStart;
+            startLineIndex = linestrings.length + newLineStrings.length;
+          }
+          const pointOnLineForEnd = nearestPointOnLine(currentFeature, point(end));
+          const distanceForEnd = turfDistance(pointOnLineForEnd, point(end));
+          if (distanceForEnd < closestEndDistance) {
+            pointOnEndLine = pointOnLineForEnd.geometry.coordinates;
+            closestEndDistance = distanceForEnd;
+            endLineIndex = linestrings.length + newLineStrings.length;
+          }
           newLineStrings.push(currentFeature);
         }
       });
       linestrings = [...linestrings, ...newLineStrings];
     });
+
+    // edit the linestrings that coorespond with the startLineIndex and endLineIndex
+    if(pointOnStartLine) {
+      linestrings[startLineIndex].geometry.coordinates = this.insertPointIntoLineString(linestrings[startLineIndex], pointOnStartLine).updatedLine!.geometry.coordinates;
+    }
+    if(pointOnEndLine){
+      linestrings[endLineIndex].geometry.coordinates = this.insertPointIntoLineString(linestrings[endLineIndex], pointOnEndLine).updatedLine!.geometry.coordinates;
+    }
+    if(pointOnStartLine && pointOnEndLine){
+      linestrings.push(lineString([pointOnStartLine, start]));
+      linestrings.push(lineString([pointOnEndLine, end]));
+    }
 
     this.network = this.buildNetwork(linestrings);
   }
@@ -132,12 +179,10 @@ export default class LinestringPathFinder {
             if (newLineString.success) {
               newLinestrings.set(`${i}`, newLineString.updatedLine!);
             }
-            console.log("newLineString", JSON.stringify(newLineString));
             const newLineString2 = this.insertPointIntoLineString(newLinestrings.get(`${j}`)!, intersection);
             if (newLineString2.success) {
               newLinestrings.set(`${j}`, newLineString2.updatedLine!);
             }
-            console.log("newLineString2", JSON.stringify(newLineString2));
           });
         }
       }
@@ -348,13 +393,11 @@ const test = () => {
     ]
   ])
 
-  const s = [
-    -111.86516756409644,
-    40.77003545080544
-  ];
+  const s = [  -111.86243980505056,
+    40.75684132474058];
   const e =  [
-    -111.83276652931693,
-    40.7456156372628
+    -111.81015049276384,
+    40.7544965295354
   ]
 
   const pathFinder = new LinestringPathFinder([line1, line2, line3, line4], s, e);
