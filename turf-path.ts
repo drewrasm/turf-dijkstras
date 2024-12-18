@@ -17,23 +17,9 @@ type Node = string;
 type Edge = { target: Node; weight: number };
 type Graph = Map<Node, Edge[]>;
 
-type InitialPointInfo = {
-  origin: number[];
-  lineString: Feature<LineString>;
-  distance: number;
-  pointOnLine: number[];
-}
-
 export default class LinestringPathFinder {
   network: Graph;
-  startInfo: InitialPointInfo;
-  endInfo: InitialPointInfo;
   constructor(multiLinestrings: Feature<MultiLineString | LineString>[], start: number[], end: number[]) {
-    let closestLineStringStartPoint: number[] | null = null;
-    let closestToStartDistance = Infinity;
-
-    let closestLineStringEndPoint: number[] | null = null;
-    let cloestToEndDistance = Infinity;
 
     // Convert input multilinestrings into linestrings by making two collections. One for linestrings and one for multiline strings
     // while looping through, find the closest linestring to the start and end points
@@ -41,18 +27,6 @@ export default class LinestringPathFinder {
     const multilineStrings: Feature<MultiLineString>[] = [];
     multiLinestrings.forEach((linestring) => {
       if (linestring.geometry.type === 'LineString') {
-        const pointOnLineForStart = nearestPointOnLine(linestring, point(start));
-        const distanceForStart = turfDistance(pointOnLineForStart, point(start));
-        if (distanceForStart < closestToStartDistance) {
-          closestLineStringStartPoint = pointOnLineForStart.geometry.coordinates;
-          closestToStartDistance = distanceForStart;
-        }
-        const pointOnLineForEnd = nearestPointOnLine(linestring, point(end));
-        const distanceForEnd = turfDistance(pointOnLineForEnd, point(end));
-        if (distanceForEnd < cloestToEndDistance) {
-          closestLineStringEndPoint = pointOnLineForEnd.geometry.coordinates;
-          cloestToEndDistance = distanceForEnd;
-        }
 
         linestrings.push(linestring as Feature<LineString>);
       } else if (linestring.geometry.type === 'MultiLineString') {
@@ -65,46 +39,11 @@ export default class LinestringPathFinder {
       const newLineStrings: Feature<LineString>[] = [];
       flattenEach(multilineString, (currentFeature: Feature<LineString>) => {
         if (currentFeature.geometry.type === 'LineString') {
-          const pointOnLineForStart = nearestPointOnLine(currentFeature, point(start));
-          const distanceForStart = turfDistance(pointOnLineForStart, point(start));
-          if (distanceForStart < closestToStartDistance) {
-            closestLineStringStartPoint = pointOnLineForStart.geometry.coordinates;
-            closestToStartDistance = distanceForStart;
-          }
-          const pointOnLineForEnd = nearestPointOnLine(currentFeature, point(end));
-          const distanceForEnd = turfDistance(pointOnLineForEnd, point(end));
-          if (distanceForEnd < cloestToEndDistance) {
-            closestLineStringEndPoint = pointOnLineForEnd.geometry.coordinates;
-            cloestToEndDistance = distanceForEnd;
-          }
           newLineStrings.push(currentFeature);
         }
       });
       linestrings = [...linestrings, ...newLineStrings];
     });
-
-    if (!closestLineStringStartPoint) {
-      console.log('closest line string point not found')
-    }
-    const startToNearestLineString = lineString([start, closestLineStringStartPoint ? closestLineStringStartPoint : start]);
-
-    if (!closestLineStringEndPoint) {
-      console.log('closest line string point not found')
-    }
-    const endToNearestLineString = lineString([closestLineStringEndPoint ? closestLineStringEndPoint : end, end]);
-
-    this.startInfo = {
-      origin: start,
-      lineString: startToNearestLineString,
-      distance: closestToStartDistance,
-      pointOnLine: closestLineStringStartPoint ? closestLineStringStartPoint : start
-    }
-    this.endInfo = {
-      origin: end,
-      lineString: endToNearestLineString,
-      distance: cloestToEndDistance,
-      pointOnLine: closestLineStringEndPoint ? closestLineStringEndPoint : end
-    }
 
     this.network = this.buildNetwork(linestrings);
   }
@@ -230,71 +169,21 @@ export default class LinestringPathFinder {
     return { updatedLine: lineString(updatedCoords), success: true };
   }
 
-  handleStartAndEndInfo(graph: Graph) {
-
-    const startKey = this.coordToKey(this.startInfo.origin);
-    const endKey = this.coordToKey(this.endInfo.origin);
-    const startOnLineKey = this.coordToKey(this.startInfo.pointOnLine);
-    const endOnLineKey = this.coordToKey(this.endInfo.pointOnLine);
-
-    if (!graph.has(startKey)) {
-      graph.set(startKey, []);
-    }
-    if (!graph.has(endKey)) {
-      graph.set(endKey, []);
-    }
-    if (!graph.has(startOnLineKey)) {
-      graph.set(startOnLineKey, []);
-    }
-    if (!graph.has(endOnLineKey)) {
-      graph.set(endOnLineKey, []);
-    }
-
-    graph.get(startKey)?.push({ target: startOnLineKey, weight: this.startInfo.distance });
-    graph.get(endKey)?.push({ target: endOnLineKey, weight: this.endInfo.distance });
-
-    const { before: startBefore, after: startAfter } = this.getClosestPointsForLine(this.startInfo.lineString, this.startInfo.pointOnLine);
-    graph.get(startOnLineKey)?.push({ target: startKey, weight: this.startInfo.distance });
-    if (startBefore && (startKey !== startOnLineKey) && (startKey !== startBefore?.target)) {
-      graph.get(startOnLineKey)?.push(startBefore);
-    }
-    if (startAfter && (startKey !== startOnLineKey) && (startKey !== startAfter?.target)) {
-      graph.get(startOnLineKey)?.push(startAfter);
-    }
-
-    const { before: endBefore, after: endAfter } = this.getClosestPointsForLine(this.endInfo.lineString, this.endInfo.pointOnLine);
-    graph.get(endOnLineKey)?.push({ target: endKey, weight: this.endInfo.distance });
-    if (endBefore && (endKey !== endOnLineKey) && (endKey !== endBefore?.target)) {
-      graph.get(endOnLineKey)?.push(endBefore);
-    }
-    if (endAfter && (endKey !== endOnLineKey) && (endKey !== endAfter?.target)) {
-      graph.get(endOnLineKey)?.push(endAfter);
-    }
-  }
-
   /**
   * Builds a graph from an array of LineString features
   * @param linestrings - Array of GeoJSON LineString features
   * @returns An adjacency list representing the graph
   */
   buildNetwork(linestrings: Feature<LineString>[]): Graph {
-    // for each linestring, we need a record of the linestrings that intersect it and at what points
-    // we need to make a record of those points and the neighbors of those points
-    // then we ned to give those neighbors weights and include them in the graph
-
-    // for both the start and end point, we need to figure out the neighbors
-    // this will end up being the start of the whole graph
-
+    // initialize graph
     const graph: Graph = new Map();
 
+    // account for all intersections
     const formattedLineStrings = this.getIntersections(linestrings);
 
-    console.log('formattedLineStrings', JSON.stringify(formattedLineStrings));
-
+    // add weights and neighbors
     formattedLineStrings.forEach(linestring => {
-      // for each linestring, we need to figure out their neighbors.
-      // their neighbors, I'm pretty sure, are just the next and previous points on the linestring.
-
+      // since we've accounted for intersections in our formatted linestrings, each neighbor in this loop is guaranteed to be connected
       const coords = linestring.geometry.coordinates;
       // go through each coord and add it to the graph with its previous and next as neighbors w/weights
       for (let i = 0; i < coords.length; i++) {
@@ -469,21 +358,3 @@ const test = () => {
 }
 
 test();
-
-
-
-// verifying what works
-
-/*
-  constructor - pretty sure it works, the linestrings look great on geojson.io
-    IDK - we need to be able to force the two start linestrings to be included into the network somehow
-    Right now the stupid nearest point function doesn't necessarily always constitute an intersection which is wackadoodle idk
-    
-
-  coordToKey - works
-
-  getIntersections - works but dosn't with lines that apparently don't intersect lol
-
-  start and end points - not sure yet. I think it's broken. Should probably focus on the whole thing working without those pesky start and end points first
-
-*/
