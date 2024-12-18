@@ -1,4 +1,4 @@
-import { Feature, LineString, lineString, multiLineString, MultiLineString, point } from '@turf/helpers';
+import { Feature, LineString, lineString, MultiLineString, point } from '@turf/helpers';
 import turfDistance from '@turf/distance';
 import { flattenEach } from "@turf/meta";
 import lineIntersect from "@turf/line-intersect";
