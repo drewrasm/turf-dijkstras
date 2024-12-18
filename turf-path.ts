@@ -21,6 +21,14 @@ export default class LinestringPathFinder {
   network: Graph;
   constructor(multiLinestrings: Feature<MultiLineString | LineString>[], start: number[], end: number[]) {
 
+    // handling start and end:
+    /*
+      * create a linestring from start to nearest linestring in collection
+      * create a linestring from nearest linestring in collection to end
+      * take those two points and insert them into those connected linestrings
+      * add the new formatted linestrings as well as the start and end linestrings to the network 
+    */
+
     // Convert input multilinestrings into linestrings by making two collections. One for linestrings and one for multiline strings
     // while looping through, find the closest linestring to the start and end points
     let linestrings: Feature<LineString>[] = [];
