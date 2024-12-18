@@ -3,6 +3,7 @@ import turfDistance from '@turf/distance';
 import { flattenEach } from "@turf/meta";
 import lineIntersect from "@turf/line-intersect";
 import nearestPointOnLine from "@turf/nearest-point-on-line";
+import pointToLineDistance from '@turf/point-to-line-distance';
 
 
 /*
@@ -115,43 +116,6 @@ export default class LinestringPathFinder {
     return `${coord[0]},${coord[1]}`;
   }
 
-  // Helper function to find neighboring points on a line
-  getDirectionalNeighbors(line1: Feature<LineString>, line2: Feature<LineString>, intersectionPoint: number[]): [Edge[], Map<Node, Edge[]>] {
-    const neighbors: Edge[] = [];
-    // possible corrections is an array of edges that corresponds to possibilities in the original graph where a neighbor no longer is a neighbor
-    // if an intersection disrupts two neighbors, they're no longer neighbors
-    const possibleCorrections: Map<Node, Edge[]> = new Map();
-
-    const { before: line1Before, after: line1After } = this.getClosestPointsForLine(line1, intersectionPoint)
-    const { before: line2Before, after: line2After } = this.getClosestPointsForLine(line2, intersectionPoint)
-
-    if (line1Before) {
-      neighbors.push(line1Before);
-    }
-    if (line1After) {
-      neighbors.push(line1After);
-    }
-
-    if (line1Before && line1After) {
-      possibleCorrections.set(line1Before.target, [{ target: line1After.target, weight: line1After.weight + line1Before.weight }]);
-      possibleCorrections.set(line1After.target, [{ target: line1Before.target, weight: line1After.weight + line1Before.weight }]);
-    }
-
-    if (line2Before) {
-      neighbors.push(line2Before);
-    }
-    if (line2After) {
-      neighbors.push(line2After);
-    }
-
-    if (line2Before && line2After) {
-      possibleCorrections.set(line2Before.target, [{ target: line2After.target, weight: line2After.weight + line2Before.weight }]);
-      possibleCorrections.set(line2After.target, [{ target: line2Before.target, weight: line2After.weight + line2Before.weight }]);
-    }
-
-    return [neighbors, possibleCorrections];
-  }
-
   // Helper function to find the closest points on two lines. This helps construct the graph for intersecting points.
   getClosestPointsForLine(line: Feature<LineString>, intersectionPoint: number[]): { before: Edge | null, after: Edge | null } {
     const lineCoords = line.geometry.coordinates;
@@ -198,36 +162,73 @@ export default class LinestringPathFinder {
     return { before: formattedBefore, after: formattedAfter };
   }
 
-
-  getIntersections(linestrings: Feature<LineString>[]): { coords: number[]; neighbors: Edge[], corrections: Map<Node, Edge[]> }[] {
+  getIntersections(linestrings: Feature<LineString>[]): Feature<LineString>[] {
     // change this so that per intersection we have the corrections
-
-
-    // Function to calculate intersection details
-    const intersections: { coords: number[]; neighbors: Edge[], corrections: Map<Node, Edge[]> }[] = []
-
+    const newLinestrings: Map<string, Feature<LineString>> = new Map();
 
     // Iterate through each pair of linestrings
     for (let i = 0; i < linestrings.length; i++) {
       for (let j = i + 1; j < linestrings.length; j++) {
         if (i !== j) {
+          if (!newLinestrings.has(`${i}`)) {
+            newLinestrings.set(`${i}`, linestrings[i]);
+          }
+          if (!newLinestrings.has(`${j}`)) {
+            newLinestrings.set(`${j}`, linestrings[j]);
+          }
           // Get intersection points
           const intersectPoints = lineIntersect(linestrings[i], linestrings[j]);
 
           intersectPoints.features.forEach((p) => {
             const intersection = p.geometry.coordinates;
-            // Find the neighboring points on each linestring
-            const [neighbors, possibleCorrections] = this.getDirectionalNeighbors(linestrings[i], linestrings[j], intersection);
-            intersections.push({ coords: intersection, neighbors, corrections: possibleCorrections });
-
+            const newLineString = this.insertPointIntoLineString(newLinestrings.get(`${i}`)!, intersection);
+            if (newLineString.success) {
+              newLinestrings.set(`${i}`, newLineString.updatedLine!);
+            }
+            console.log("newLineString", JSON.stringify(newLineString));
+            const newLineString2 = this.insertPointIntoLineString(newLinestrings.get(`${j}`)!, intersection);
+            if (newLineString2.success) {
+              newLinestrings.set(`${j}`, newLineString2.updatedLine!);
+            }
+            console.log("newLineString2", JSON.stringify(newLineString2));
           });
         }
       }
     }
 
-    return intersections;
+    return [...newLinestrings.values()];
   }
 
+  insertPointIntoLineString(line: Feature<LineString>, newPoint: number[]): { updatedLine: Feature<LineString> | null, success: boolean } {
+    const lineCoords = line.geometry.coordinates;
+    let closestSegmentIndex = -1;
+    let closestDistance = Infinity;
+  
+    // Find the segment where the new point should be inserted
+    for (let i = 0; i < lineCoords.length - 1; i++) {
+      const segment = lineString([lineCoords[i], lineCoords[i + 1]]);
+      const distance = pointToLineDistance(point(newPoint), segment);
+  
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestSegmentIndex = i;
+      }
+    }
+  
+    if (closestSegmentIndex === -1) {
+      return { updatedLine: null, success: false };
+    }
+  
+    // Insert the new point into the correct segment
+    const updatedCoords = [
+      ...lineCoords.slice(0, closestSegmentIndex + 1),
+      newPoint,
+      ...lineCoords.slice(closestSegmentIndex + 1),
+    ];
+  
+    // Return the updated LineString
+    return { updatedLine: lineString(updatedCoords), success: true };
+  }
 
   handleStartAndEndInfo(graph: Graph) {
 
@@ -286,12 +287,11 @@ export default class LinestringPathFinder {
 
     const graph: Graph = new Map();
 
-    // this.handleStartAndEndInfo(graph);
+    const formattedLineStrings = this.getIntersections(linestrings);
 
-    // console.log('startInfo linestring', JSON.stringify(this.startInfo.lineString));
-    // console.log('endInfo linestring', JSON.stringify(this.endInfo.lineString));
+    console.log('formattedLineStrings', JSON.stringify(formattedLineStrings));
 
-    linestrings.forEach(linestring => {
+    formattedLineStrings.forEach(linestring => {
       // for each linestring, we need to figure out their neighbors.
       // their neighbors, I'm pretty sure, are just the next and previous points on the linestring.
 
@@ -321,39 +321,6 @@ export default class LinestringPathFinder {
         }
       }
     });
-
-    const intersections = this.getIntersections(linestrings);
-
-    for (let i = 0; i < intersections.length; i++) {
-      const intersection = intersections[i];
-      const key = this.coordToKey(intersection.coords);
-      if (!graph.has(key)) {
-        graph.set(key, []);
-      }
-      for (let j = 0; j < intersection.neighbors.length; j++) {
-        const neighbor = intersection.neighbors[j];
-        if (!graph.has(neighbor.target)) {
-          graph.set(neighbor.target, []);
-        }
-        graph.get(neighbor.target)?.push({ target: key, weight: neighbor.weight });
-      }
-      graph.get(key)?.push(...intersection.neighbors);
-      // map through intersection.corrections and remove the edges from the graph
-      for (let [key, edges] of intersection.corrections) {
-        const currentEdgesToCorrect = graph.get(key);
-        if (currentEdgesToCorrect && currentEdgesToCorrect.length > 0) {
-          for (let edge of edges) {
-            currentEdgesToCorrect.forEach((edgeToCorrect, index) => {
-              if (edgeToCorrect.target === edge.target && edgeToCorrect.weight.toFixed(6) === edge.weight.toFixed(6)) {
-                currentEdgesToCorrect.splice(index, 1);
-              }
-            })
-          }
-        }
-      }
-    }
-
-    console.log('graph', graph);
 
     return graph;
   }
@@ -437,43 +404,63 @@ const test = () => {
       40.725010814740386
     ]
   ]);
-  const line2 = lineString([[
-    -111.88850777645592,
-    40.75010189571543
-  ],
-  [
-    -111.829576856461,
-    40.750967496930315
-  ]])
+  const line2 = lineString([
+    [
+      -111.88850777645592,
+      40.75010189571543
+    ],
+    [
+      -111.829576856461,
+      40.750967496930315
+    ]
+  ])
   const line3 = lineString([
     [
-      -111.84355466180223,
-      40.75868302964949
+      -111.84025605848765,
+      40.753824397626715
     ],
     [
-      -111.84221125597901,
-      40.737387999134256
+      -111.84000201774212,
+      40.73922492783112
+    ]
+  ])
+  const line4 = lineString([
+    [
+      -111.88306010479505,
+      40.73160091837579
     ],
     [
-      -111.84930007130968,
-      40.729128425152965
+      -111.85631653642979,
+      40.73104977445652
     ],
     [
-      -111.83443926908637,
-      40.72798035279712
+      -111.85207145971464,
+      40.74024293098353
+    ],
+    [
+      -111.83276652931693,
+      40.7456156372628
+    ],
+    [
+      -111.82357920212552,
+      40.74204578913225
+    ],
+    [
+      -111.8124112507476,
+      40.755486952525615
     ]
   ])
 
-  const s = [-111.86516756409644, 40.77003545080544];
-  const e = [
-    -111.83443926908637,
-    40.72798035279712
+  const s = [
+    -111.86516756409644,
+    40.77003545080544
+  ];
+  const e =  [
+    -111.83276652931693,
+    40.7456156372628
   ]
 
-  // TODDO - get this next example working (the previous with just the first two lines worked fine)
-
-
-  const pathFinder = new LinestringPathFinder([line1, line2, line3], s, e);
+  const pathFinder = new LinestringPathFinder([line1, line2, line3, line4], s, e);
 
   const { path, distance } = pathFinder.findShortestPath(s, e);
 
