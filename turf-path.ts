@@ -9,9 +9,8 @@ import pointToLineDistance from '@turf/point-to-line-distance';
   * Takes multiline strings and convert into linestrings
   * Converts linestrings into a network of connected points
   * Handles intersections by splitting linestrings
-  * Find shortest path between two points
+  * Find shortest path between two points using Dijkstra's algorithm
  */
-
 
 type Node = string;
 type Edge = { target: Node; weight: number };
@@ -19,7 +18,9 @@ type Graph = Map<Node, Edge[]>;
 
 export default class LinestringPathFinder {
   network: Graph;
-  isTooFarFromRivers: boolean = false;
+  isTooFarFromRivers = false;
+
+  allowedDistanceFromRivers = 40;
   constructor(multiLinestrings: Feature<MultiLineString | LineString>[], start: number[], end: number[]) {
     let closestStartDistance = Infinity;
     let closestEndDistance = Infinity;
@@ -80,8 +81,8 @@ export default class LinestringPathFinder {
       linestrings = [...linestrings, ...newLineStrings];
     });
 
-    if (closestStartDistance > 40 || closestEndDistance > 40) {
-      console.log('start or end point too far from rivers');
+    if (closestStartDistance > this.allowedDistanceFromRivers || closestEndDistance > this.allowedDistanceFromRivers) {
+      console.log('start or end point too far from rivers, defaulting to straight line path');
       this.isTooFarFromRivers = true;
       this.network = new Map();
       return;
@@ -292,6 +293,9 @@ export default class LinestringPathFinder {
   }
 
   findShortestPath = (start: number[], end: number[]): { path: Feature<LineString>, distance: number } => {
+    if (this.isTooFarFromRivers) {
+      return { path: lineString([start, end]), distance: turfDistance(point(start), point(end)) };
+    }
 
     const { distance, path } = this.dijkstra(this.network, this.coordToKey(start), this.coordToKey(end));
 
