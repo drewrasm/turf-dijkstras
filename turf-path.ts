@@ -5,7 +5,8 @@ import lineIntersect from "@turf/line-intersect";
 import nearestPointOnLine from "@turf/nearest-point-on-line";
 import pointToLineDistance from '@turf/point-to-line-distance';
 // import {start, end, features} from './example-path.json';
-import {start, end, features} from './example-path-1.json';
+// import {start, end, features} from './example-path-1.json';
+import {start, end, features} from './example-path-2.json';
 
 /*
   * Takes multiline strings and convert into linestrings
