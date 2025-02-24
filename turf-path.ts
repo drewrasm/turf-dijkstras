@@ -1,12 +1,13 @@
-import { Feature, FeatureCollection, LineString, lineString, MultiLineString, point, Properties } from '@turf/helpers';
+import { Feature, FeatureCollection, LineString, lineString, MultiLineString, point } from '@turf/helpers';
 import turfDistance from '@turf/distance';
 import { flattenEach } from "@turf/meta";
 import lineIntersect from "@turf/line-intersect";
 import nearestPointOnLine from "@turf/nearest-point-on-line";
 import pointToLineDistance from '@turf/point-to-line-distance';
-// import {start, end, features} from './example-path.json';
+import {start, end, features} from './example-path.json';
 // import {start, end, features} from './example-path-1.json';
-import {start, end, features} from './example-path-2.json';
+// import {start, end, features} from './example-path-2.json';
+// import { start, end, features } from './example-path-3.json'; // example of a path that doesn't exist
 
 /*
   * Takes multiline strings and convert into linestrings
