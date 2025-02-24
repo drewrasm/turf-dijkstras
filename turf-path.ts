@@ -1,9 +1,10 @@
-import { Feature, LineString, lineString, MultiLineString, point } from '@turf/helpers';
+import { Feature, FeatureCollection, LineString, lineString, MultiLineString, point, Properties } from '@turf/helpers';
 import turfDistance from '@turf/distance';
 import { flattenEach } from "@turf/meta";
 import lineIntersect from "@turf/line-intersect";
 import nearestPointOnLine from "@turf/nearest-point-on-line";
 import pointToLineDistance from '@turf/point-to-line-distance';
+import {start, end, features} from './example-path.json';
 
 /*
   * Takes multiline strings and convert into linestrings
@@ -19,8 +20,11 @@ type Graph = Map<Node, Edge[]>;
 export default class LinestringPathFinder {
   network: Graph;
   isTooFarFromRivers = false;
-
   allowedDistanceFromRivers = 40;
+
+  startTime: number | null = null;
+  maximumTimeLimit = 8 * 1000;
+
   constructor(multiLinestrings: Feature<MultiLineString | LineString>[], start: number[], end: number[]) {
     let closestStartDistance = Infinity;
     let closestEndDistance = Infinity;
@@ -28,10 +32,12 @@ export default class LinestringPathFinder {
     let endLineIndex = -1;
     let pointOnStartLine = null;
     let pointOnEndLine = null;
+    this.startTime = Date.now();
 
     let linestrings: Feature<LineString>[] = [];
     const multilineStrings: Feature<MultiLineString>[] = [];
-    multiLinestrings.forEach((linestring) => {
+    for (const linestring of multiLinestrings) {
+      if (this.isTimedOut()) break; // break out early if we've timed out
       if (linestring.geometry.type === 'LineString') {
         // find the closest linestring to the start and end points
         const pointOnLineForStart = nearestPointOnLine(linestring, point(start));
@@ -54,12 +60,13 @@ export default class LinestringPathFinder {
       } else if (linestring.geometry.type === 'MultiLineString') {
         multilineStrings.push(linestring as Feature<MultiLineString>);
       }
-    });
+    };
 
     // Convert input multiline strings into linestrings
-    multilineStrings.forEach((multilineString: any) => {
+    for (const multilineString of multilineStrings) {
+      if (this.isTimedOut()) break; // break out early if we've timed out
       const newLineStrings: Feature<LineString>[] = [];
-      flattenEach(multilineString, (currentFeature: Feature<LineString>) => {
+      flattenEach(multilineString as any, (currentFeature: Feature<LineString>) => {
         if (currentFeature.geometry.type === 'LineString') {
           const pointOnLineForStart = nearestPointOnLine(currentFeature, point(start));
           const distanceForStart = turfDistance(pointOnLineForStart, point(start));
@@ -79,7 +86,7 @@ export default class LinestringPathFinder {
         }
       });
       linestrings = [...linestrings, ...newLineStrings];
-    });
+    }
 
     if (closestStartDistance > this.allowedDistanceFromRivers || closestEndDistance > this.allowedDistanceFromRivers) {
       console.log('start or end point too far from rivers, defaulting to straight line path');
@@ -103,9 +110,16 @@ export default class LinestringPathFinder {
     this.network = this.buildNetwork(linestrings);
   }
 
+  isTimedOut = () => {
+    const currentTime = Date.now();
+    const timedOut = currentTime - this.startTime! > this.maximumTimeLimit;
+    if(timedOut) console.log('path finder timed out - defaulting to straight line path');
+    return timedOut;
+  }
+
   /**
- * Converts a coordinate to a string key (e.g., [x, y] -> "x,y")
- */
+  * Converts a coordinate to a string key (e.g., [x, y] -> "x,y")
+  */
   coordToKey(coord: number[]): string {
     return `${coord[0]},${coord[1]}`;
   }
@@ -116,7 +130,9 @@ export default class LinestringPathFinder {
 
     // Iterate through each pair of linestrings
     for (let i = 0; i < linestrings.length; i++) {
+      if (i % 5 === 0 && this.isTimedOut()) return []; // every 5 linestrings, check if we've timed out
       for (let j = i + 1; j < linestrings.length; j++) {
+        if (i % 5 === 0 && this.isTimedOut()) return []; // every 5 linestrings, check if we've timed out
         if (i !== j) {
           if (!newLinestrings.has(`${i}`)) {
             newLinestrings.set(`${i}`, linestrings[i]);
@@ -193,15 +209,20 @@ export default class LinestringPathFinder {
     const formattedLineStrings = this.getIntersections(linestrings);
 
     // add weights and neighbors
-    formattedLineStrings.forEach(linestring => {
+    for (let i = 0; i < formattedLineStrings.length; i++) {
+      // break out early if we've timed out every 5 linestrings
+      if(i % 5 === 0 && this.isTimedOut()) {
+        return new Map();
+      };
+      const linestring = formattedLineStrings[i];
       // since we've accounted for intersections in our formatted linestrings, each neighbor in this loop is guaranteed to be connected
       const coords = linestring.geometry.coordinates;
       // go through each coord and add it to the graph with its previous and next as neighbors w/weights
-      for (let i = 0; i < coords.length; i++) {
-        const coord = coords[i];
+      for (let j = 0; j < coords.length; j++) {
+        const coord = coords[j];
         const key = this.coordToKey(coord);
-        const prevCoord: number[] | null = i === 0 ? null : coords[i - 1];
-        const nextCoord: number[] | null = i === coords.length - 1 ? null : coords[i + 1];
+        const prevCoord: number[] | null = j === 0 ? null : coords[j - 1];
+        const nextCoord: number[] | null = j === coords.length - 1 ? null : coords[j + 1];
 
         if (prevCoord) {
           const prevKey = this.coordToKey(prevCoord);
@@ -220,8 +241,7 @@ export default class LinestringPathFinder {
           graph.get(key)?.push({ target: nextKey, weight: nextCoordDistance });
         }
       }
-    });
-
+    }
     return graph;
   }
 
@@ -309,78 +329,58 @@ export default class LinestringPathFinder {
       return [x, y];
     });
 
-    return { path: lineString(formattedPath), distance };
+    return { path: lineString(formattedPath), distance: distance };
   };
 
 }
 
-const test = () => {
-
-  const line1 = lineString([
-    [
-      -111.85376055660758,
-      40.76038720145661
-    ],
-    [
-      -111.84621855496208,
-      40.75323855798587
-    ],
-    [
-      -111.85944407658616,
-      40.74310844900381
-    ],
-    [
-      -111.83857999458694,
-      40.72773626658861
-    ],
-    [
-      -111.85069577576085,
-      40.72502998795909
-    ]
-  ]);
-  const line2 = lineString([
-    [
-      -111.84465142826285,
-      40.75834809190411
-    ],
-    [
-      -111.8546278118561,
-      40.754557310495926
-    ],
-    [
-      -111.84920194333104,
-      40.747110124075874
-    ],
-    [
-      -111.83852071753277,
-      40.74478965990912
-    ],
-    [
-      -111.85518626316455,
-      40.73397762393603
-    ],
-    [
-      -111.87562887027482,
-      40.73592963853403
-    ]
-  ])
+const test = (highlight = false) => {
 
 
-  const s = [
-    -111.79593362711739,
-    40.412463134612096
-  ]
-  const e = [
-    -111.90822306859323,
-    40.42614375107934
-  ]
+  const pathFinder = new LinestringPathFinder(features as Feature<MultiLineString | LineString>[], start, end);
 
-  const pathFinder = new LinestringPathFinder([line1, line2], s, e);
+  const { path, distance } = pathFinder.findShortestPath(start, end);
 
-  const { path, distance } = pathFinder.findShortestPath(s, e);
+  if(highlight) {
+    return [path, distance, highlightPathAndPoints(features as Feature<LineString>[], path, start, end)];
+  }
 
-  console.log(path, distance);
+  return [path, distance];
 
 }
 
-test();
+const highlightPathAndPoints = (
+  linestrings: Feature<LineString>[],
+  path: Feature<LineString>,
+  start: number[],
+  end: number[]
+): FeatureCollection => {
+  return {
+    type: "FeatureCollection",
+    features: [
+      ...linestrings.map(line => ({
+        ...line,
+        properties: { ...line.properties, stroke: "#000000" },
+      })),
+      {
+        ...path,
+        properties: { stroke: "#71fd08" },
+      },
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: start },
+        properties: { color: "#FFA500" },
+      },
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: end },
+        properties: { color: "#FFA500" },
+      },
+    ],
+  };
+};
+
+const [path, distance, highlights] = test(true);
+
+console.log(JSON.stringify(highlights))
+

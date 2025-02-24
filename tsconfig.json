@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+
+    "resolveJsonModule": true,
         
         "lib": ["es2016", "dom"],  // Include ES2015 features (Map, Set, etc.)
         
