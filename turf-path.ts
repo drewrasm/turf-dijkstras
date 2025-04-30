@@ -8,11 +8,15 @@ import {
   point,
   Point,
   Polygon,
+  FeatureCollection
 } from '@turf/helpers';
 import lineIntersect from '@turf/line-intersect';
 import { flattenEach } from '@turf/meta';
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import pointToLineDistance from '@turf/point-to-line-distance';
+
+import { start, end, features } from './example-path-broken.json';
+
 
 const pathErrors = {
   NoPath: 'No path was found within the given start and end points',
@@ -455,3 +459,54 @@ export default class LinestringPathFinder {
     };
   };
 }
+
+
+const test = (highlight = false) => {
+
+
+  const pathFinder = new LinestringPathFinder(features as Feature<MultiLineString | LineString>[], start, end, null);
+
+  const { path, distance } = pathFinder.findShortestPath(start, end);
+
+  if(highlight) {
+    return [path, distance, highlightPathAndPoints(features as Feature<LineString>[], path, start, end)];
+  }
+
+  return [path, distance];
+
+}
+
+const highlightPathAndPoints = (
+  linestrings: Feature<LineString>[],
+  path: Feature<LineString>,
+  start: number[],
+  end: number[]
+): FeatureCollection => {
+  return {
+    type: "FeatureCollection",
+    features: [
+      ...linestrings.map(line => ({
+        ...line,
+        properties: { ...line.properties, stroke: "#000000" },
+      })),
+      {
+        ...path,
+        properties: { stroke: "#71fd08" },
+      },
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: start },
+        properties: { color: "#FFA500" },
+      },
+      {
+        type: "Feature",
+        geometry: { type: "Point", coordinates: end },
+        properties: { color: "#FFA500" },
+      },
+    ],
+  };
+};
+
+const [path, distance, highlights] = test(true);
+
+console.log(JSON.stringify(highlights))
