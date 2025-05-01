@@ -88,9 +88,6 @@ export default class LinestringPathFinder {
       allFeatures.push(startLine);
     }
 
-    const toLog =  JSON.stringify([...allFeatures, point(start), point(end), bufferPolygon])
-    console.log('beginning features', toLog)
-
     const processLineString = (linestring: Feature<LineString>) => {
       if (linestring.geometry.type === 'LineString') {
         if (bufferPolygon) {
@@ -142,9 +139,6 @@ export default class LinestringPathFinder {
       startPointInfo.closestLineDistance > this.allowedDistanceFromRivers ||
       endPointInfo.closestLineDistance > this.allowedDistanceFromRivers
     ) {
-      console.log(
-        'start or end point too far from rivers, defaulting to straight line path',
-      );
       this.isTooFarFromRivers = true;
       this.network = new Map();
       return;
@@ -182,14 +176,6 @@ export default class LinestringPathFinder {
         lineString([endPointInfo.pointOnClosestLine.geometry.coordinates, end]),
       );
     }
-
-    console.log('ending network linestrings', JSON.stringify(linestrings.map(l => ({
-      ...l, 
-      properties: {
-        ...l.properties, 
-        stroke: '#FF69B4'
-      }
-    }))));
 
     this.network = this.buildNetwork(linestrings);
   }
@@ -466,7 +452,13 @@ const test = (highlight = false) => {
 
   const pathFinder = new LinestringPathFinder(features as Feature<MultiLineString | LineString>[], start, end, null);
 
-  const { path, distance } = pathFinder.findShortestPath(start, end);
+  const res = pathFinder.findShortestPath(start, end);
+
+  if(res.success === false) {
+    console.log('ERROR', res.error)
+  }
+
+  const { path, distance } = res;
 
   if(highlight) {
     return [path, distance, highlightPathAndPoints(features as Feature<LineString>[], path, start, end)];
