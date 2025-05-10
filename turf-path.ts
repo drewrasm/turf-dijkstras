@@ -15,7 +15,7 @@ import { flattenEach } from '@turf/meta';
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import pointToLineDistance from '@turf/point-to-line-distance';
 
-import { start, end, features } from './example-path-broken.json';
+import {start, end, features} from './example-path-big.json';
 
 
 const pathErrors = {
@@ -87,13 +87,22 @@ export default class LinestringPathFinder {
     if (startLine) {
       allFeatures.push(startLine);
     }
+    const shouldFilterOut = (linestring: Feature<LineString>) => {
+      // isn't a tributary of the start line
+      if (startLine && lineIntersect(linestring, startLine).features.length === 0) {
+        return true;
+      }
+      // isn't in the buffer
+      if (bufferPolygon && !booleanIntersects(linestring, bufferPolygon)) {
+        return true;
+      }
+      return false;
+    }
 
     const processLineString = (linestring: Feature<LineString>) => {
       if (linestring.geometry.type === 'LineString') {
-        if (bufferPolygon) {
-          if (!booleanIntersects(linestring, bufferPolygon)) {
+        if (shouldFilterOut(linestring)) {
             return;
-          }
         }
         // find the closest linestring to the start and end points
         const pointOnLineForStart = nearestPointOnLine(
@@ -499,6 +508,9 @@ const highlightPathAndPoints = (
   };
 };
 
+const startTime = Date.now();
 const [path, distance, highlights] = test(true);
 
 console.log(JSON.stringify(highlights))
+
+console.log(`Time taken: ${Date.now() - startTime}ms`);
