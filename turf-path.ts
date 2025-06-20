@@ -1,27 +1,45 @@
-import booleanIntersects from '@turf/boolean-intersects';
-import turfDistance from '@turf/distance';
+import distance from '@turf/distance';
 import {
+  Coord,
   Feature,
   LineString,
   lineString,
   MultiLineString,
   point,
   Point,
-  Polygon,
-  FeatureCollection
+  Units,
 } from '@turf/helpers';
+import turfLengthHelper from '@turf/length';
 import lineIntersect from '@turf/line-intersect';
+import lineSlice from '@turf/line-slice';
 import { flattenEach } from '@turf/meta';
 import nearestPointOnLine from '@turf/nearest-point-on-line';
 import pointToLineDistance from '@turf/point-to-line-distance';
 
-import {start, end, features} from './example-path-big.json';
+// Define a more specific type for distance units
+type DistanceUnits = 'degrees' | 'radians' | 'miles' | 'kilometers' | 'meters' | 'feet' | 'inches' | 'centimeters' | 'millimeters' | 'nauticalmiles' | 'yards';
 
+// Force all distances to be in miles
+export const turfDistance = (
+  from: Coord | Point,
+  to: Coord | Point,
+  units: DistanceUnits = 'miles',
+) => {
+  return distance(from, to, { units });
+};
+
+export const turfLength = (
+  line: Feature<LineString | MultiLineString>,
+  options: { units: Units } = { units: 'miles' },
+) => {
+  return turfLengthHelper(line, options);
+};
 
 const pathErrors = {
   NoPath: 'No path was found within the given start and end points',
   TooFarFromRivers: 'The start or end point is too far from a river',
   TimedOut: 'The pathfinding operation timed out',
+  Unknown: 'Oops, something went wrong',
 };
 
 type PathResult =
@@ -58,6 +76,7 @@ export default class LinestringPathFinder {
   network: Graph;
   isTooFarFromRivers = false;
   allowedDistanceFromRivers = 40;
+  linestrings: Feature<LineString>[] = []; // Store the linestrings used for the network
 
   startTime: number | null = null;
   maximumTimeLimit = 30 * 1000;
@@ -66,8 +85,6 @@ export default class LinestringPathFinder {
     allFeatures: Feature<MultiLineString | LineString>[],
     start: number[],
     end: number[],
-    bufferPolygon: Feature<Polygon> | null,
-    startLine?: Feature<MultiLineString | LineString>,
   ) {
     const startPointInfo: InitialPointInfo = {
       lineIndex: -1,
@@ -84,26 +101,11 @@ export default class LinestringPathFinder {
     this.startTime = Date.now();
 
     const linestrings: Feature<LineString>[] = [];
-    if (startLine) {
-      allFeatures.push(startLine);
-    }
-    const shouldFilterOut = (linestring: Feature<LineString>) => {
-      // isn't a tributary of the start line
-      if (startLine && lineIntersect(linestring, startLine).features.length === 0) {
-        return true;
-      }
-      // isn't in the buffer
-      if (bufferPolygon && !booleanIntersects(linestring, bufferPolygon)) {
-        return true;
-      }
-      return false;
-    }
 
-    const processLineString = (linestring: Feature<LineString>) => {
+    const processLineString = (
+      linestring: Feature<LineString>,
+    ) => {
       if (linestring.geometry.type === 'LineString') {
-        if (shouldFilterOut(linestring)) {
-            return;
-        }
         // find the closest linestring to the start and end points
         const pointOnLineForStart = nearestPointOnLine(
           linestring,
@@ -130,24 +132,28 @@ export default class LinestringPathFinder {
       }
     };
 
-    for (const linestring of allFeatures) {
-      if (this.isTimedOut()) break; // break out early if we've timed out
+    allFeatures.forEach((linestring) => {
+      if (this.isTimedOut()) return; // break out early if we've timed out
       if (linestring.geometry.type === 'LineString') {
         processLineString(linestring as Feature<LineString>);
       } else if (linestring.geometry.type === 'MultiLineString') {
         flattenEach(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           linestring as any,
           (currentFeature: Feature<LineString>) => {
             processLineString(currentFeature);
           },
         );
       }
-    }
+    });
 
     if (
       startPointInfo.closestLineDistance > this.allowedDistanceFromRivers ||
       endPointInfo.closestLineDistance > this.allowedDistanceFromRivers
     ) {
+      console.log(
+        'start or end point too far from rivers, defaulting to straight line path',
+      );
       this.isTooFarFromRivers = true;
       this.network = new Map();
       return;
@@ -187,6 +193,7 @@ export default class LinestringPathFinder {
     }
 
     this.network = this.buildNetwork(linestrings);
+    this.linestrings = linestrings; // Store the linestrings for later use
   }
 
   isTimedOut = () => {
@@ -228,19 +235,27 @@ export default class LinestringPathFinder {
 
           intersectPoints.features.forEach((p) => {
             const intersection = p.geometry.coordinates;
-            const newLineString = this.insertPointIntoLineString(
-              newLinestrings.get(`${i}`)!,
-              intersection,
-            );
-            if (newLineString.success) {
-              newLinestrings.set(`${i}`, newLineString.updatedLine!);
+            const lineStringI = newLinestrings.get(`${i}`);
+            const lineStringJ = newLinestrings.get(`${j}`);
+            
+            if (lineStringI) {
+              const newLineString = this.insertPointIntoLineString(
+                lineStringI,
+                intersection,
+              );
+              if (newLineString.success && newLineString.updatedLine) {
+                newLinestrings.set(`${i}`, newLineString.updatedLine);
+              }
             }
-            const newLineString2 = this.insertPointIntoLineString(
-              newLinestrings.get(`${j}`)!,
-              intersection,
-            );
-            if (newLineString2.success) {
-              newLinestrings.set(`${j}`, newLineString2.updatedLine!);
+            
+            if (lineStringJ) {
+              const newLineString2 = this.insertPointIntoLineString(
+                lineStringJ,
+                intersection,
+              );
+              if (newLineString2.success && newLineString2.updatedLine) {
+                newLinestrings.set(`${j}`, newLineString2.updatedLine);
+              }
             }
           });
         }
@@ -260,6 +275,9 @@ export default class LinestringPathFinder {
 
     // Find the segment where the new point should be inserted
     for (let i = 0; i < lineCoords.length - 1; i++) {
+      if (areCoordsEqual(lineCoords[i], lineCoords[i + 1])) {
+        continue;
+      }
       const segment = lineString([lineCoords[i], lineCoords[i + 1]]);
       const distance = pointToLineDistance(point(newPoint), segment);
 
@@ -356,29 +374,40 @@ export default class LinestringPathFinder {
     const predecessors: Map<string, string | null> = new Map();
     const visited: Set<string> = new Set();
 
-    // Priority queue for nodes to visit
+    // Priority queue for nodes to visit (using a simple array but more efficiently)
     const pq: [string, number][] = [];
-    pq.push([source, 0]);
-    distances.set(source, 0);
-
+    
     // Initialize distances to infinity and predecessors to null
     for (const node of graph.keys()) {
-      if (node !== source) distances.set(node, Infinity);
+      distances.set(node, Infinity);
       predecessors.set(node, null);
     }
+    
+    // Set source distance to 0 and add to priority queue
+    distances.set(source, 0);
+    pq.push([source, 0]);
 
     while (pq.length > 0) {
-      // Sort queue by distance and get the node with the smallest distance
-      pq.sort((a, b) => a[1] - b[1]);
-      const [currentNode, currentDistance] = pq.shift()!;
+      // Find the node with minimum distance (more efficient than sorting every time)
+      let minIndex = 0;
+      for (let i = 1; i < pq.length; i++) {
+        if (pq[i][1] < pq[minIndex][1]) {
+          minIndex = i;
+        }
+      }
+      
+      // Swap with first element and remove
+      [pq[0], pq[minIndex]] = [pq[minIndex], pq[0]];
+      const dequeued = pq.shift();
+      if (!dequeued) break;
+      const [currentNode, currentDistance] = dequeued;
 
       if (visited.has(currentNode)) continue;
       visited.add(currentNode);
 
-      // If we reached the target, no need to continue
+      // If we reached the target, we're done
       if (currentNode === target) break;
 
-      // Relax neighbors
       const neighbors = graph.get(currentNode) || [];
       for (const { target: neighbor, weight } of neighbors) {
         if (visited.has(neighbor)) continue;
@@ -408,109 +437,182 @@ export default class LinestringPathFinder {
   }
 
   findShortestPath = (start: number[], end: number[]): PathResult => {
-    if (this.isTimedOut()) {
+    try {
+      if (this.isTimedOut()) {
+        return {
+          path: lineString([start, end]),
+          distance: turfDistance(point(start), point(end)),
+          success: false,
+          error: pathErrors.TimedOut,
+        };
+      }
+
+      if (this.isTooFarFromRivers) {
+        return {
+          path: lineString([start, end]),
+          distance: turfDistance(point(start), point(end)),
+          success: false,
+          error: pathErrors.TooFarFromRivers,
+        };
+      }
+
+      const { distance, path } = this.dijkstra(
+        this.network,
+        this.coordToKey(start),
+        this.coordToKey(end),
+      );
+
+      // if a route isn't found, connect the start and end points
+      console.log('rip no path, path logic is bad or somethin')
+      if (distance === Infinity) {
+        return {
+          path: lineString([start, end]),
+          distance: turfDistance(point(start), point(end)),
+          success: false,
+          error: pathErrors.NoPath,
+        };
+      }
+
+      const formattedPath = path.map((coord) => {
+        const [x, y] = coord.split(',').map(Number);
+        return [x, y];
+      });
+
+      const lineStringPath = lineString(formattedPath);
+
+      const trueDistance = calculateDistanceAlongRiver(
+        point(start).geometry,
+        point(end).geometry,
+        lineStringPath.geometry,
+      );
+      console.log('oh well we get here then I guess hmmm')
+      return {
+        path: lineString(formattedPath),
+        distance: Number(trueDistance.distance),
+        success: true,
+      };
+    } catch (error) {
+      console.log('WE HIT THIS ERROR', error);
       return {
         path: lineString([start, end]),
-        distance: turfDistance(point(start), point(end), { units: 'miles' }),
+        distance: turfDistance(point(start), point(end)),
         success: false,
-        error: pathErrors.TimedOut,
+        error: pathErrors.Unknown,
       };
     }
-
-    if (this.isTooFarFromRivers) {
-      return {
-        path: lineString([start, end]),
-        distance: turfDistance(point(start), point(end), { units: 'miles' }),
-        success: false,
-        error: pathErrors.TooFarFromRivers,
-      };
-    }
-
-    const { distance, path } = this.dijkstra(
-      this.network,
-      this.coordToKey(start),
-      this.coordToKey(end),
-    );
-
-    // if a route isn't found, connect the start and end points
-    if (distance === Infinity) {
-      return {
-        path: lineString([start, end]),
-        distance: turfDistance(point(start), point(end), { units: 'miles' }),
-        success: false,
-        error: pathErrors.NoPath,
-      };
-    }
-
-    const formattedPath = path.map((coord) => {
-      const [x, y] = coord.split(',').map(Number);
-      return [x, y];
-    });
-
-    return {
-      path: lineString(formattedPath),
-      distance: Number(distance),
-      success: true,
-    };
   };
 }
 
-
-const test = (highlight = false) => {
-
-
-  const pathFinder = new LinestringPathFinder(features as Feature<MultiLineString | LineString>[], start, end, null);
-
-  const res = pathFinder.findShortestPath(start, end);
-
-  if(res.success === false) {
-    console.log('ERROR', res.error)
-  }
-
-  const { path, distance } = res;
-
-  if(highlight) {
-    return [path, distance, highlightPathAndPoints(features as Feature<LineString>[], path, start, end)];
-  }
-
-  return [path, distance];
-
-}
-
-const highlightPathAndPoints = (
-  linestrings: Feature<LineString>[],
-  path: Feature<LineString>,
-  start: number[],
-  end: number[]
-): FeatureCollection => {
-  return {
-    type: "FeatureCollection",
-    features: [
-      ...linestrings.map(line => ({
-        ...line,
-        properties: { ...line.properties, stroke: "#000000" },
-      })),
-      {
-        ...path,
-        properties: { stroke: "#71fd08" },
-      },
-      {
-        type: "Feature",
-        geometry: { type: "Point", coordinates: start },
-        properties: { color: "#FFA500" },
-      },
-      {
-        type: "Feature",
-        geometry: { type: "Point", coordinates: end },
-        properties: { color: "#FFA500" },
-      },
-    ],
-  };
+const areCoordsEqual = (coord1: number[], coord2: number[]): boolean => {
+  return coord1[0] === coord2[0] && coord1[1] === coord2[1];
 };
 
-const startTime = Date.now();
-const [path, distance, highlights] = test(true);
+// same river logic
+export const isPointNearRiver = (
+  coords: number[],
+  river: Feature<LineString | MultiLineString>,
+): boolean => {
+  const pointOnLine = nearestPointOnLine(river, point(coords));
+  const distance = turfDistance(pointOnLine, point(coords), 'meters');
+  console.log('distance for end point to river', distance);
+  const isCloseEnough = distance < 100;
+  return isCloseEnough;
+};
 
-console.log(JSON.stringify(highlights))
+export const formatDistance = (distance: number): number => {
+  return distance % 1 === 0 ? distance : parseFloat(distance.toFixed(2));
+};
 
-console.log(`Time taken: ${Date.now() - startTime}ms`);
+export const commonRiverPath = (
+  start: number[],
+  end: number[],
+  river: Feature<LineString>,
+): {
+  path: Feature<LineString>;
+  distance: number;
+} => {
+  const slice = lineSlice(start, end, river);
+  const nearestPointForStart = nearestPointOnLine(slice, point(start));
+  const nearestPointForEnd = nearestPointOnLine(slice, point(end));
+
+  const endIsFurtherFromStartOfSlice =
+    turfDistance(nearestPointForEnd, slice.geometry.coordinates[0]) >
+    turfDistance(nearestPointForStart, slice.geometry.coordinates[0]);
+
+  if (endIsFurtherFromStartOfSlice) {
+    const path = lineString([
+      start,
+      nearestPointForStart.geometry.coordinates,
+      ...slice.geometry.coordinates.slice(1, -1),
+      nearestPointForEnd.geometry.coordinates,
+      end,
+    ]);
+    const pathDistance = turfLength(path);
+    return {
+      path,
+      distance: formatDistance(pathDistance),
+    };
+  } else {
+    const path = lineString([
+      end,
+      nearestPointForEnd.geometry.coordinates,
+      ...slice.geometry.coordinates.slice(1, -1),
+      nearestPointForStart.geometry.coordinates,
+      start,
+    ]);
+    const pathDistance = turfLength(path);
+    return {
+      path,
+      distance: formatDistance(pathDistance),
+    };
+  }
+};
+
+export function calculateDistanceAlongRiver(
+  start: GeoJSON.Point,
+  stop: GeoJSON.Point,
+  river: GeoJSON.LineString,
+): { distance: string; line: Feature<LineString> } {
+  const turfOptions: { units: DistanceUnits } = { units: 'miles' };
+  const startPoint = nearestPointOnLine(river, start, turfOptions);
+  const stopPoint = nearestPointOnLine(river, stop, turfOptions);
+  const sliced = lineSlice(startPoint, stopPoint, river);
+
+  let closestToStartOfSlice = start;
+  let closestToEndOfSlice = stop;
+  const length = sliced.geometry.coordinates.length;
+
+  if (
+    distance(sliced.geometry.coordinates[0], start.coordinates, turfOptions) >
+    distance(
+      sliced.geometry.coordinates[length - 1],
+      start.coordinates,
+      turfOptions,
+    )
+  ) {
+    closestToStartOfSlice = stop;
+    closestToEndOfSlice = start;
+  }
+
+  return {
+    distance: `${(
+      turfLength(sliced, turfOptions) +
+      (startPoint.properties.dist ?? 0) +
+      (stopPoint.properties.dist ?? 0)
+    ).toFixed(2)}`,
+    line: {
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        coordinates: [
+          closestToStartOfSlice.coordinates,
+          ...sliced.geometry.coordinates,
+          closestToEndOfSlice.coordinates,
+        ],
+        type: 'LineString',
+      },
+    },
+  };
+}
+
+

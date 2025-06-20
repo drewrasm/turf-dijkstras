@@ -15,23 +15,23 @@ import turfDistance from '@turf/distance';
   
   const commonRiverPath = (start: number[], end: number[], river: Feature<LineString>): Feature<LineString> => {
     const slice = lineSlice(start, end, river)
-    const nearestPointForStart = nearestPointOnLine(slice, point(start))
-    const nearestPointForEnd = nearestPointOnLine(slice, point(end))
+    // const nearestPointForStart = nearestPointOnLine(slice, point(start))
+    // const nearestPointForEnd = nearestPointOnLine(slice, point(end))
 
-    if(turfDistance(nearestPointForEnd, slice.geometry.coordinates[0]) > turfDistance(nearestPointForStart, slice.geometry.coordinates[0])) { 
+    if(turfDistance(end, slice.geometry.coordinates[0]) > turfDistance(start, slice.geometry.coordinates[0])) { 
       return lineString([
         start,
-        nearestPointForStart.geometry.coordinates,
+        // nearestPointForStart.geometry.coordinates,
         ...slice.geometry.coordinates.slice(1, -1),
-        nearestPointForEnd.geometry.coordinates,
+        // nearestPointForEnd.geometry.coordinates,
         end
       ])  
     } else {
       return lineString([
         end,
-        nearestPointForEnd.geometry.coordinates,
+        // nearestPointForEnd.geometry.coordinates,
         ...slice.geometry.coordinates.slice(1, -1),
-        nearestPointForStart.geometry.coordinates,
+        // nearestPointForStart.geometry.coordinates,
         start
       ])
     }  
