@@ -262,7 +262,10 @@ export default class LinestringPathFinder {
       }
     }
 
-    return [...newLinestrings.values()];
+    // Now connect nearby endpoints with a tolerance (10 meters = ~0.0001 degrees)
+    const connectedLinestrings = this.connectNearbyEndpoints([...newLinestrings.values()], 0.001);
+
+    return connectedLinestrings;
   }
 
   insertPointIntoLineString(
@@ -501,6 +504,118 @@ export default class LinestringPathFinder {
       };
     }
   };
+
+  /**
+   * Connects linestrings that have endpoints within a specified tolerance
+   * @param linestrings - Array of LineString features
+   * @param tolerance - Distance tolerance in degrees (approximately 10 meters = 0.0001 degrees)
+   * @returns Array of connected LineString features
+   */
+  connectNearbyEndpoints(linestrings: Feature<LineString>[], tolerance: number): Feature<LineString>[] {
+    console.log(`🔗 Connecting nearby endpoints with tolerance: ${tolerance} degrees`);
+    console.log(`📊 Original linestrings: ${linestrings.length}`);
+    
+    const connected: Feature<LineString>[] = [];
+    const used: Set<number> = new Set();
+    let connectionsMade = 0;
+
+    for (let i = 0; i < linestrings.length; i++) {
+      if (used.has(i)) continue;
+      
+      let currentLinestring = linestrings[i];
+      used.add(i);
+      
+      // Try to connect this linestring with others
+      let madeConnection = true;
+      while (madeConnection) {
+        madeConnection = false;
+        
+        for (let j = 0; j < linestrings.length; j++) {
+          if (used.has(j)) continue;
+          
+          const otherLinestring = linestrings[j];
+          const connection = this.findEndpointConnection(currentLinestring, otherLinestring, tolerance);
+          
+          if (connection) {
+            console.log(`🔗 Connecting linestrings ${i} and ${j} with ${connection.type} connection (distance: ${connection.distance.toFixed(6)})`);
+            // Connect the linestrings
+            const connectedCoords = connection.type === 'start-to-end' 
+              ? [...currentLinestring.geometry.coordinates, ...otherLinestring.geometry.coordinates.slice(1)]
+              : connection.type === 'start-to-start'
+              ? [...otherLinestring.geometry.coordinates.slice().reverse(), ...currentLinestring.geometry.coordinates.slice(1)]
+              : connection.type === 'end-to-end'
+              ? [...currentLinestring.geometry.coordinates.slice(0, -1), ...otherLinestring.geometry.coordinates.slice().reverse()]
+              : [...currentLinestring.geometry.coordinates.slice(0, -1), ...otherLinestring.geometry.coordinates];
+            
+            currentLinestring = lineString(connectedCoords);
+            used.add(j);
+            madeConnection = true;
+            connectionsMade++;
+            break;
+          }
+        }
+      }
+      
+      connected.push(currentLinestring);
+    }
+    
+    console.log(`🔗 Made ${connectionsMade} connections, resulting in ${connected.length} connected linestrings`);
+    return connected;
+  }
+
+  /**
+   * Finds if two linestrings can be connected at their endpoints
+   * @param line1 - First LineString
+   * @param line2 - Second LineString  
+   * @param tolerance - Distance tolerance in degrees
+   * @returns Connection info or null if no connection possible
+   */
+  findEndpointConnection(
+    line1: Feature<LineString>, 
+    line2: Feature<LineString>, 
+    tolerance: number
+  ): { type: 'start-to-end' | 'start-to-start' | 'end-to-end' | 'end-to-start'; distance: number } | null {
+    const coords1 = line1.geometry.coordinates;
+    const coords2 = line2.geometry.coordinates;
+    
+    if (coords1.length === 0 || coords2.length === 0) return null;
+    
+    const start1 = coords1[0];
+    const end1 = coords1[coords1.length - 1];
+    const start2 = coords2[0];
+    const end2 = coords2[coords2.length - 1];
+    
+    // Check all possible endpoint combinations
+    const distances = [
+      { type: 'start-to-end' as const, distance: this.calculateDistance(start1, end2) },
+      { type: 'start-to-start' as const, distance: this.calculateDistance(start1, start2) },
+      { type: 'end-to-end' as const, distance: this.calculateDistance(end1, end2) },
+      { type: 'end-to-start' as const, distance: this.calculateDistance(end1, start2) }
+    ];
+    
+    // Find the closest connection within tolerance
+    const closest = distances.reduce((min, current) => 
+      current.distance < min.distance ? current : min
+    );
+    
+    if (closest.distance <= tolerance) {
+      return closest;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Calculates distance between two coordinate points
+   * @param coord1 - First coordinate [lon, lat]
+   * @param coord2 - Second coordinate [lon, lat]
+   * @returns Distance in degrees
+   */
+  calculateDistance(coord1: number[], coord2: number[]): number {
+    const dx = coord1[0] - coord2[0];
+    const dy = coord1[1] - coord2[1];
+    return Math.sqrt(dx * dx + dy * dy);
+  }
 }
 
 const areCoordsEqual = (coord1: number[], coord2: number[]): boolean => {

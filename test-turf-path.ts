@@ -2,7 +2,7 @@ import LinestringPathFinder from './turf-path';
 import { Feature, LineString, MultiLineString, lineString } from '@turf/helpers';
 
 // Load the example data
-const exampleData = require('./example-path.json');
+const exampleData = require('./example-path-broken-june-19th.json'); // NOTE: THIS IS AN ACTUAL BROKEN PATH 
 
 /**
  * Generates a feature collection for visualization with:
@@ -104,7 +104,55 @@ async function testPathFinder() {
   console.log('\n⏱️  Creating path finder...');
   const pathFinder = new LinestringPathFinder(riverFeatures, start, end);
   
-  console.log('🔍 Finding shortest path...');
+  // Debug: Check if start and end points are in the network
+  const startKey = pathFinder.coordToKey(start);
+  const endKey = pathFinder.coordToKey(end);
+  
+  console.log('\n🔍 Debug Network Analysis:');
+  console.log('📍 Start key:', startKey);
+  console.log('📍 End key:', endKey);
+  console.log('📍 Start in network:', pathFinder.network.has(startKey));
+  console.log('📍 End in network:', pathFinder.network.has(endKey));
+  
+  if (pathFinder.network.has(startKey)) {
+    console.log('📍 Start connections:', pathFinder.network.get(startKey)?.length || 0);
+    console.log('📍 Start neighbors:', pathFinder.network.get(startKey)?.map(e => e.target) || []);
+  }
+  
+  if (pathFinder.network.has(endKey)) {
+    console.log('📍 End connections:', pathFinder.network.get(endKey)?.length || 0);
+    console.log('📍 End neighbors:', pathFinder.network.get(endKey)?.map(e => e.target) || []);
+  }
+  
+  // Check for any nodes that might be close to start/end
+  console.log('\n🔍 Looking for nearby nodes...');
+  const allNodes = Array.from(pathFinder.network.keys());
+  const startCoords = start.map(Number);
+  const endCoords = end.map(Number);
+  
+  const nearbyStartNodes = allNodes.filter(node => {
+    const [x, y] = node.split(',').map(Number);
+    const distance = Math.sqrt((x - startCoords[0])**2 + (y - startCoords[1])**2);
+    return distance < 0.01; // Within ~0.01 degrees
+  });
+  
+  const nearbyEndNodes = allNodes.filter(node => {
+    const [x, y] = node.split(',').map(Number);
+    const distance = Math.sqrt((x - endCoords[0])**2 + (y - endCoords[1])**2);
+    return distance < 0.01; // Within ~0.01 degrees
+  });
+  
+  console.log('📍 Nodes near start:', nearbyStartNodes.length);
+  if (nearbyStartNodes.length > 0) {
+    console.log('📍 Closest start nodes:', nearbyStartNodes.slice(0, 3));
+  }
+  
+  console.log('📍 Nodes near end:', nearbyEndNodes.length);
+  if (nearbyEndNodes.length > 0) {
+    console.log('📍 Closest end nodes:', nearbyEndNodes.slice(0, 3));
+  }
+  
+  console.log('\n🔍 Finding shortest path...');
   const result = pathFinder.findShortestPath(start, end);
   
   // Generate and log the feature collection for visualization AFTER pathfinding
